@@ -2,24 +2,20 @@
 # Edit nbs/02_mcp_exhash.ipynb instead.
 
 from __future__ import annotations
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 try:
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
-    from mcp import types
+    from mcp.server.fastmcp import FastMCP
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
 
 
 def run_lnhashview(file_path: str) -> dict:
-    """Run lnhashview on a file and return the hash-addressed view.
-
-    Returns a dict with 'output' (the view) or 'error'.
-    """
+    """Run lnhashview on a file and return the hash-addressed view."""
     p = Path(file_path)
     if not p.exists():
         return {'error': f'File not found: {file_path}'}
@@ -42,8 +38,6 @@ def run_exhash_edit(file_path: str, commands: str, dry_run: bool = False) -> dic
 
     `commands` is a string of exhash substitution commands, one per line.
     Example:  's/HASH123/new content/'
-
-    Returns a dict with 'output' on success or 'error'.
     """
     p = Path(file_path)
     if not p.exists():
@@ -56,9 +50,7 @@ def run_exhash_edit(file_path: str, commands: str, dry_run: bool = False) -> dic
 
     try:
         result = subprocess.run(
-            cmd,
-            input=commands,
-            capture_output=True, text=True, timeout=30
+            cmd, input=commands, capture_output=True, text=True, timeout=30
         )
         if result.returncode == 0:
             return {'output': result.stdout or 'Edit applied successfully', 'file': file_path}
@@ -69,63 +61,26 @@ def run_exhash_edit(file_path: str, commands: str, dry_run: bool = False) -> dic
         return {'error': 'exhash timed out'}
 
 
-def create_server() -> 'Server':
+def create_server() -> 'FastMCP':
     """Create and configure the exhash MCP server."""
-    server = Server('exhash')
+    mcp = FastMCP('exhash')
 
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return [
-            types.Tool(
-                name='lnhashview',
-                description=(
-                    'Display a file with hash-addressed line prefixes using exhash. '
-                    'Use this before exhash_edit to get the line hashes needed for editing.'
-                ),
-                inputSchema={
-                    'type': 'object',
-                    'properties': {
-                        'file_path': {'type': 'string', 'description': 'Absolute or relative path to the file'},
-                    },
-                    'required': ['file_path'],
-                },
-            ),
-            types.Tool(
-                name='exhash_edit',
-                description=(
-                    'Edit a file using exhash hash-addressed commands. '
-                    'First call lnhashview to get line hashes, then pass exhash substitution '
-                    'commands (e.g. s/HASH/new_content/). Supports dry_run mode.'
-                ),
-                inputSchema={
-                    'type': 'object',
-                    'properties': {
-                        'file_path': {'type': 'string', 'description': 'Path to the file to edit'},
-                        'commands': {'type': 'string', 'description': 'exhash commands, one per line'},
-                        'dry_run': {'type': 'boolean', 'description': 'If true, preview changes without applying', 'default': False},
-                    },
-                    'required': ['file_path', 'commands'],
-                },
-            ),
-        ]
+    @mcp.tool()
+    def lnhashview(file_path: str) -> str:
+        """Display a file with hash-addressed line prefixes using exhash.
+        Use this before exhash_edit to get the line hashes needed for editing.
+        """
+        return json.dumps(run_lnhashview(file_path), indent=2)
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-        if name == 'lnhashview':
-            result = run_lnhashview(arguments['file_path'])
-        elif name == 'exhash_edit':
-            result = run_exhash_edit(
-                arguments['file_path'],
-                arguments['commands'],
-                dry_run=arguments.get('dry_run', False),
-            )
-        else:
-            result = {'error': f'Unknown tool: {name}'}
+    @mcp.tool()
+    def exhash_edit(file_path: str, commands: str, dry_run: bool = False) -> str:
+        """Edit a file using exhash hash-addressed commands.
+        First call lnhashview to get line hashes, then pass exhash substitution
+        commands (e.g. s/HASH/new_content/). Set dry_run=True to preview changes.
+        """
+        return json.dumps(run_exhash_edit(file_path, commands, dry_run=dry_run), indent=2)
 
-        import json
-        return [types.TextContent(type='text', text=json.dumps(result, indent=2))]
-
-    return server
+    return mcp
 
 
 def main():
@@ -133,9 +88,8 @@ def main():
     if not HAS_MCP:
         print('mcp package not installed. Run: uv add mcp', file=sys.stderr)
         sys.exit(1)
-    import asyncio
-    server = create_server()
-    asyncio.run(stdio_server(server))
+    mcp = create_server()
+    mcp.run()
 
 
 if __name__ == '__main__':

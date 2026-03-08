@@ -8,7 +8,7 @@ from pathlib import Path
 
 def skills_source_dir() -> Path:
     """Return the path to the bundled skills directory inside the package."""
-    return Path(__file__).parent.parent / '.claude' / 'skills'
+    return Path(__file__).parent / 'skills'
 
 
 def install_skills(target_dir: Path, overwrite: bool = False) -> list[str]:

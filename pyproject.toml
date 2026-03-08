@@ -39,9 +39,9 @@ include = ["claude_plugins*"]
 
 [tool.setuptools.package-data]
 claude_plugins = [
-    "skills/**/*",
+    "skills/**/*.md",
+    "skills/**/*.py",
     "config/**/*",
-    "hooks/**/*",
 ]
 
 [tool.nbdev]

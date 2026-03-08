@@ -7,9 +7,7 @@ import json
 import sys
 
 try:
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
-    from mcp import types
+    from mcp.server.fastmcp import FastMCP
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
@@ -20,7 +18,7 @@ try:
 except ImportError:
     HAS_SAFEPYRUN = False
 
-# Session-scoped runner — persists state across calls within a server session
+# Session-scoped runner — persists state across tool calls within a server session
 _runner: 'RunPython | None' = None
 
 
@@ -34,84 +32,45 @@ def get_runner() -> 'RunPython':
     return _runner
 
 
-async def run_python_tool(code: str, extra_allows: list[str] | None = None) -> dict:
-    """Execute Python code in the safepyrun sandbox.
+def create_server() -> 'FastMCP':
+    mcp = FastMCP('safepyrun')
 
-    Variables ending with _ are exported back to the session namespace.
-    Returns stdout, stderr, and any exported variables.
-    """
-    try:
-        runner = get_runner()
-        result = await runner(code)
-        return {
-            'success': True,
-            'stdout': result.stdout if hasattr(result, 'stdout') else str(result),
-            'stderr': result.stderr if hasattr(result, 'stderr') else '',
-            'result': result.result if hasattr(result, 'result') else None,
-        }
-    except ImportError as e:
-        return {'success': False, 'error': str(e)}
-    except Exception as e:
-        return {'success': False, 'error': f'{type(e).__name__}: {e}'}
+    @mcp.tool()
+    async def run_python(code: str) -> str:
+        """Execute Python code in a safepyrun sandbox.
+        Code has access to curated stdlib. Variables ending with _ are exported
+        to the session namespace for reuse across calls.
+        """
+        try:
+            runner = get_runner()
+            result = await runner(code)
+            return json.dumps({
+                'success': True,
+                'stdout': result.stdout if hasattr(result, 'stdout') else str(result),
+                'stderr': result.stderr if hasattr(result, 'stderr') else '',
+                'result': result.result if hasattr(result, 'result') else None,
+            }, indent=2)
+        except ImportError as e:
+            return json.dumps({'success': False, 'error': str(e)}, indent=2)
+        except Exception as e:
+            return json.dumps({'success': False, 'error': f'{type(e).__name__}: {e}'}, indent=2)
 
-
-def create_server() -> 'Server':
-    server = Server('safepyrun')
-
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return [
-            types.Tool(
-                name='run_python',
-                description=(
-                    'Execute Python code in a safepyrun sandbox. '
-                    'Code has access to curated stdlib + any explicitly allowed packages. '
-                    'Variables ending with _ are exported to the session namespace for reuse.'
-                ),
-                inputSchema={
-                    'type': 'object',
-                    'properties': {
-                        'code': {'type': 'string', 'description': 'Python code to execute'},
-                        'extra_allows': {
-                            'type': 'array',
-                            'items': {'type': 'string'},
-                            'description': 'Extra function names to allow in this execution',
-                        },
-                    },
-                    'required': ['code'],
-                },
-            ),
-            types.Tool(
-                name='reset_sandbox',
-                description='Reset the Python sandbox, clearing all session state.',
-                inputSchema={'type': 'object', 'properties': {}},
-            ),
-        ]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    @mcp.tool()
+    def reset_sandbox() -> str:
+        """Reset the Python sandbox, clearing all session state."""
         global _runner
-        if name == 'run_python':
-            result = await run_python_tool(
-                arguments['code'],
-                extra_allows=arguments.get('extra_allows'),
-            )
-        elif name == 'reset_sandbox':
-            _runner = None
-            result = {'success': True, 'message': 'Sandbox reset'}
-        else:
-            result = {'error': f'Unknown tool: {name}'}
-        return [types.TextContent(type='text', text=json.dumps(result, indent=2))]
+        _runner = None
+        return json.dumps({'success': True, 'message': 'Sandbox reset'}, indent=2)
 
-    return server
+    return mcp
 
 
 def main():
     if not HAS_MCP:
         print('mcp package not installed. Run: uv add mcp', file=sys.stderr)
         sys.exit(1)
-    server = create_server()
-    asyncio.run(stdio_server(server))
+    mcp = create_server()
+    mcp.run()
 
 
 if __name__ == '__main__':

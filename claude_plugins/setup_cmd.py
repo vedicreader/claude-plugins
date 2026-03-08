@@ -93,16 +93,36 @@ MCP_CONFIG = {
     }
 }
 
+# opencode (opencode.ai) reads MCP servers from opencode.json
+OPENCODE_CONFIG = {
+    "mcp": {
+        "exhash": {
+            "type": "local",
+            "command": ["uv", "run", "python", "-m", "claude_plugins.mcp_exhash"]
+        },
+        "safecmd": {
+            "type": "local",
+            "command": ["uv", "run", "python", "-m", "claude_plugins.mcp_safecmd"]
+        },
+        "safepyrun": {
+            "type": "local",
+            "command": ["uv", "run", "python", "-m", "claude_plugins.mcp_safepyrun"]
+        }
+    }
+}
+
 CLAUDE_MD_BLOCK = '''
 <!-- claude-plugins: START -->
 ## Claude Code Setup (claude-plugins)
 
 Active hooks: safecmd (Bash PreToolUse), exhash (Edit/Write PostToolUse), code indexer (SessionStart).
 MCP servers available: exhash, safecmd, safepyrun.
-Skills: /exhash /safecmd /safepyrun /litesearch /fasthtml /lisette /nbdev /codesigs
+Skills: /exhash /safecmd /safepyrun /litesearch /fasthtml /monsterui /lisette /nbdev /codesigs
 Code index: .claude/code_index.db (built on session start via codesigs + litesearch)
 <!-- claude-plugins: END -->
 '''
+
+VALID_COMPONENTS = {'hooks', 'mcp', 'skills'}
 
 
 def check_uv() -> bool:
@@ -131,7 +151,6 @@ def upsert_claude_md(target: Path) -> None:
     claude_md = target / 'CLAUDE.md'
     if claude_md.exists():
         content = claude_md.read_text()
-        # Remove old block if present
         if '<!-- claude-plugins: START -->' in content:
             content = re.sub(
                 r'<!-- claude-plugins: START -->.*?<!-- claude-plugins: END -->',
@@ -143,84 +162,155 @@ def upsert_claude_md(target: Path) -> None:
 
 
 def install_packages_uv(target: Path) -> None:
-    """Install dev packages into the target project using UV."""
-    print('\n[2/8] Installing packages with UV...')
-    for pkg in DEV_PACKAGES:
-        print(f'      uv add --optional dev {pkg}')
-        try:
-            run(['uv', 'add', '--optional', 'dev', pkg], cwd=target, check=False)
-        except Exception as e:
-            print(f'      WARNING: failed to add {pkg}: {e}')
-    run(['uv', 'sync', '--extra', 'dev'], cwd=target, check=False)
+    """Install dev packages into the target project venv using uv pip install."""
+    print('\n[2/N] Installing packages with UV...')
+    # Ensure there's a venv to install into
+    run(['uv', 'venv', '--seed'], cwd=target, check=False)
+    # Install all packages at once — faster than one-by-one
+    result = run(['uv', 'pip', 'install'] + DEV_PACKAGES, cwd=target, check=False)
+    if result.returncode != 0:
+        print('  WARNING: some packages may have failed — check output above')
 
 
-def setup(target_dir: str | None = None, skip_packages: bool = False) -> None:
-    """Run the full claude-plugins setup in target_dir (default: cwd)."""
+def index_installed_packages(target: Path) -> int:
+    """Index installed packages from the venv into the code search index.
+
+    Uses litesearch.data.pkg2chunks to extract code from installed packages.
+    Returns number of chunks indexed.
+    """
+    db_path = target / '.claude' / 'code_index.db'
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from litesearch import database
+        from litesearch.utils import FastEncode
+        from litesearch.data import pkg2chunks
+
+        db = database(str(db_path))
+        store = db.get_store(name='deps')
+        encoder = FastEncode()
+
+        total = 0
+        for pkg in DEV_PACKAGES:
+            pkg_name = pkg.replace('-', '_').lower()
+            try:
+                chunks = pkg2chunks(pkg_name)
+                rows = []
+                for chunk in chunks:
+                    text = chunk.get('content', '') if isinstance(chunk, dict) else str(chunk)
+                    if not text.strip():
+                        continue
+                    rows.append({
+                        'content': text,
+                        'embedding': encoder.encode_document(text).tobytes(),
+                        'metadata': json.dumps({'source': pkg_name, **({k: v for k, v in chunk.items() if k != 'content'} if isinstance(chunk, dict) else {})}),
+                    })
+                if rows:
+                    store.insert_all(rows)
+                    total += len(rows)
+                    print(f'    indexed {len(rows)} chunks from {pkg_name}')
+            except Exception as e:
+                pass  # Package may not be indexable
+        return total
+    except ImportError:
+        print('  WARNING: litesearch not available, skipping dep indexing')
+        return 0
+
+
+def setup(
+    target_dir: str | None = None,
+    skip_packages: bool = False,
+    components: set[str] | None = None,
+    index_deps: bool = False,
+) -> None:
+    """Run the claude-plugins setup in target_dir (default: cwd).
+
+    Args:
+        target_dir: Project directory (default: cwd)
+        skip_packages: Skip UV package installation
+        components: Set of components to install ('hooks', 'mcp', 'skills').
+                    None means install all.
+        index_deps: Also index installed packages into the code search index
+    """
     target = Path(target_dir or Path.cwd()).resolve()
+    install_all = components is None
+    do_hooks = install_all or 'hooks' in (components or set())
+    do_mcp = install_all or 'mcp' in (components or set())
+    do_skills = install_all or 'skills' in (components or set())
+
     print(f'claude-plugins setup — target: {target}')
+    components_str = 'all' if install_all else ', '.join(sorted(components or set()))
+    print(f'components: {components_str}')
     print('=' * 60)
 
-    # Step 1: Check UV
-    print('\n[1/8] Checking UV...')
+    # Step 1: UV check
+    print('\n[1] Checking UV...')
     if not check_uv():
-        print('  ERROR: UV not found. Install it from https://docs.astral.sh/uv/getting-started/installation/')
-        print('  curl -LsSf https://astral.sh/uv/install.sh | sh')
+        print('  ERROR: UV not found.')
+        print('  Install: curl -LsSf https://astral.sh/uv/install.sh | sh')
         sys.exit(1)
     print('  OK UV found')
 
-    # Step 2: Install packages
+    # Step 2: Packages
     if not skip_packages:
         install_packages_uv(target)
         print('  OK Packages installed')
 
-    # Step 3: nbdev-install-hooks
-    print('\n[3/8] Installing nbdev hooks (git + Jupyter)...')
-    try:
-        run(['uv', 'run', 'nbdev-install-hooks'], cwd=target, check=False)
-        print('  OK nbdev hooks installed')
-    except Exception as e:
-        print(f'  WARNING: nbdev-install-hooks failed: {e}')
+    # Step 3: nbdev hooks (only if nbdev component selected or all)
+    if install_all or do_hooks:
+        print('\n[3] Installing nbdev git+Jupyter hooks...')
+        try:
+            run(['uv', 'run', 'nbdev-install-hooks'], cwd=target, check=False)
+            print('  OK nbdev hooks installed')
+        except Exception as e:
+            print(f'  WARNING: nbdev-install-hooks failed: {e}')
 
     # Step 4: Claude Code hooks
-    print('\n[4/8] Writing .claude/settings.json (hooks)...')
-    settings_path = target / '.claude' / 'settings.json'
-    merge_json_file(settings_path, HOOKS_CONFIG)
-    print(f'  OK {settings_path}')
+    if do_hooks:
+        print('\n[4] Writing .claude/settings.json (Claude Code hooks)...')
+        merge_json_file(target / '.claude' / 'settings.json', HOOKS_CONFIG)
+        if not (target / '.claude' / 'safecmd_allowlist.json').exists():
+            write_json(target / '.claude' / 'safecmd_allowlist.json', DEFAULT_SAFECMD_ALLOWLIST)
+        print('  OK hooks + allowlist written')
 
-    # Step 5: MCP servers
-    print('\n[5/8] Writing .mcp.json (MCP servers)...')
-    mcp_path = target / '.mcp.json'
-    merge_json_file(mcp_path, MCP_CONFIG)
-    print(f'  OK {mcp_path}')
+    # Step 5: MCP servers (Claude Code + opencode)
+    if do_mcp:
+        print('\n[5] Writing MCP server configs...')
+        merge_json_file(target / '.mcp.json', MCP_CONFIG)
+        print('  OK .mcp.json (Claude Code)')
+        opencode_path = target / 'opencode.json'
+        if opencode_path.exists():
+            merge_json_file(opencode_path, OPENCODE_CONFIG)
+        else:
+            write_json(opencode_path, OPENCODE_CONFIG)
+        print('  OK opencode.json (opencode)')
 
-    # Step 6: safecmd allowlist
-    print('\n[6/8] Writing .claude/safecmd_allowlist.json...')
-    allowlist_path = target / '.claude' / 'safecmd_allowlist.json'
-    if not allowlist_path.exists():
-        write_json(allowlist_path, DEFAULT_SAFECMD_ALLOWLIST)
-        print(f'  OK {allowlist_path}')
-    else:
-        print(f'  (skipped — already exists: {allowlist_path})')
+    # Step 6: Skills
+    if do_skills:
+        print('\n[6] Installing skills to .claude/skills/...')
+        from claude_plugins.skills_gen import install_skills
+        installed = install_skills(target)
+        for name in installed:
+            print(f'  OK {name}')
 
-    # Step 7: Skills
-    print('\n[7/8] Installing skills to .claude/skills/...')
-    from claude_plugins.skills_gen import install_skills
-    installed = install_skills(target)
-    for name in installed:
-        print(f'  OK {name}')
-
-    # Step 8: CLAUDE.md
-    print('\n[8/8] Updating CLAUDE.md...')
+    # Step 7: CLAUDE.md
+    print('\n[7] Updating CLAUDE.md...')
     upsert_claude_md(target)
     print(f'  OK {target / "CLAUDE.md"}')
+
+    # Step 8: Index installed packages (optional)
+    if index_deps:
+        print('\n[8] Indexing installed package APIs...')
+        n = index_installed_packages(target)
+        print(f'  OK {n} chunks indexed from installed packages')
 
     print('\n' + '=' * 60)
     print('claude-plugins setup complete!')
     print('\nNext steps:')
-    print('  1. Start a Claude Code session: claude')
-    print('  2. Try: /exhash, /safecmd, /safepyrun, /litesearch')
-    print('  3. Review .claude/safecmd_allowlist.json to customise allowed commands')
-    print('  4. See CLAUDE.md for full usage guide')
+    print('  1. Start Claude Code: claude')
+    print('  2. Skills available: /exhash /safecmd /safepyrun /litesearch /monsterui')
+    print('  3. Edit .claude/safecmd_allowlist.json to customise allowed commands')
+    if index_deps:
+        print('  4. Code index includes installed package APIs — use /litesearch to query')
 
 
 def main():
@@ -230,20 +320,34 @@ def main():
     )
     subparsers = parser.add_subparsers(dest='command')
 
-    setup_parser = subparsers.add_parser('setup', help='Run full setup in target directory')
+    setup_parser = subparsers.add_parser('setup', help='Run setup in target directory')
+    setup_parser.add_argument('--target-dir', '-t', default=None,
+                              help='Target project directory (default: cwd)')
+    setup_parser.add_argument('--skip-packages', action='store_true',
+                              help='Skip UV package installation')
     setup_parser.add_argument(
-        '--target-dir', '-t', default=None,
-        help='Target project directory (default: current directory)',
+        '--components', '-c', default=None,
+        help='Comma-separated subset to install: hooks,mcp,skills (default: all)'
     )
-    setup_parser.add_argument(
-        '--skip-packages', action='store_true',
-        help='Skip UV package installation (hooks, MCP, skills only)',
-    )
+    setup_parser.add_argument('--index-deps', action='store_true',
+                              help='Also index installed packages into code search index')
 
     args = parser.parse_args()
 
     if args.command == 'setup':
-        setup(target_dir=args.target_dir, skip_packages=args.skip_packages)
+        components = None
+        if args.components:
+            components = {c.strip() for c in args.components.split(',')}
+            invalid = components - VALID_COMPONENTS
+            if invalid:
+                print(f'ERROR: unknown components: {invalid}. Valid: {VALID_COMPONENTS}')
+                sys.exit(1)
+        setup(
+            target_dir=args.target_dir,
+            skip_packages=args.skip_packages,
+            components=components,
+            index_deps=args.index_deps,
+        )
     else:
         parser.print_help()
 

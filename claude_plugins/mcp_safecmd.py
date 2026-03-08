@@ -5,19 +5,15 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 try:
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
-    from mcp import types
+    from mcp.server.fastmcp import FastMCP
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
 
 
 def _get_allowlist() -> list[str]:
-    """Load allowlist from .claude/safecmd_allowlist.json or return defaults."""
     from claude_plugins.hooks.safecmd_hook import load_allowlist, DEFAULT_ALLOWLIST
     try:
         return load_allowlist()
@@ -64,57 +60,28 @@ def run_safe_tool(command: str, timeout: int = 60) -> dict:
         return {'success': False, 'error': str(e), 'command': command}
 
 
-def create_server() -> 'Server':
-    server = Server('safecmd')
+def create_server() -> 'FastMCP':
+    mcp = FastMCP('safecmd')
 
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return [
-            types.Tool(
-                name='validate_command',
-                description='Check if a shell command is in the safecmd allowlist before running it.',
-                inputSchema={
-                    'type': 'object',
-                    'properties': {
-                        'command': {'type': 'string', 'description': 'The shell command to validate'},
-                    },
-                    'required': ['command'],
-                },
-            ),
-            types.Tool(
-                name='run_safe',
-                description='Validate and execute a shell command safely. Blocked if not in allowlist.',
-                inputSchema={
-                    'type': 'object',
-                    'properties': {
-                        'command': {'type': 'string', 'description': 'The shell command to run'},
-                        'timeout': {'type': 'integer', 'description': 'Timeout in seconds', 'default': 60},
-                    },
-                    'required': ['command'],
-                },
-            ),
-        ]
+    @mcp.tool()
+    def validate_command(command: str) -> str:
+        """Check if a shell command is in the safecmd allowlist before running it."""
+        return json.dumps(validate_command_tool(command), indent=2)
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-        if name == 'validate_command':
-            result = validate_command_tool(arguments['command'])
-        elif name == 'run_safe':
-            result = run_safe_tool(arguments['command'], timeout=arguments.get('timeout', 60))
-        else:
-            result = {'error': f'Unknown tool: {name}'}
-        return [types.TextContent(type='text', text=json.dumps(result, indent=2))]
+    @mcp.tool()
+    def run_safe(command: str, timeout: int = 60) -> str:
+        """Validate and execute a shell command safely. Blocked if not in allowlist."""
+        return json.dumps(run_safe_tool(command, timeout=timeout), indent=2)
 
-    return server
+    return mcp
 
 
 def main():
     if not HAS_MCP:
         print('mcp package not installed. Run: uv add mcp', file=sys.stderr)
         sys.exit(1)
-    import asyncio
-    server = create_server()
-    asyncio.run(stdio_server(server))
+    mcp = create_server()
+    mcp.run()
 
 
 if __name__ == '__main__':
