@@ -16,6 +16,7 @@ claude-plugins = "claude_plugins.setup_cmd:main"
 [project.optional-dependencies]
 dev = [
     "python-fasthtml",
+    "MonsterUI",
     "litesearch",
     "lisette",
     "exhash",

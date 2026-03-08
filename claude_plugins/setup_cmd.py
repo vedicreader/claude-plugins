@@ -12,6 +12,7 @@ from pathlib import Path
 
 DEV_PACKAGES = [
     'python-fasthtml',
+    'MonsterUI',
     'litesearch',
     'lisette',
     'exhash',

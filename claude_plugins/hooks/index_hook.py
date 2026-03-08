@@ -39,11 +39,13 @@ def build_index(root: Path, db_path: Path) -> int:
                 sigs = file_sigs(str(f))
                 for sig in sigs:
                     docs.append({
-                        'id': f'{f}::{sig.get("name", "")}',
-                        'text': f'{sig.get("signature", "")}\n{sig.get("docstring", "")}',
-                        'file': str(f),
-                        'name': sig.get('name', ''),
-                        'kind': sig.get('kind', 'function'),
+                        'text': f'{sig.get("signature", "")}\n{sig.get("docstring", "")}'.strip(),
+                        'metadata': json.dumps({
+                            'id': f'{f}::{sig.get("name", "")}',
+                            'file': str(f),
+                            'name': sig.get('name', ''),
+                            'kind': sig.get('kind', 'function'),
+                        }),
                     })
             except Exception:
                 continue
@@ -52,9 +54,8 @@ def build_index(root: Path, db_path: Path) -> int:
         for f in files:
             try:
                 docs.append({
-                    'id': str(f),
                     'text': f.read_text(errors='ignore')[:4000],
-                    'file': str(f),
+                    'metadata': json.dumps({'id': str(f), 'file': str(f)}),
                 })
             except Exception:
                 continue
@@ -63,10 +64,22 @@ def build_index(root: Path, db_path: Path) -> int:
         return 0
 
     try:
-        from litesearch import SearchDB
-        db = SearchDB(str(db_path))
-        db.add_documents(docs)
-        return len(docs)
+        from litesearch import database
+        from litesearch.utils import FastEncode
+        db = database(str(db_path))
+        store = db.get_store()
+        encoder = FastEncode()
+        rows = [
+            {
+                'content': d['text'],
+                'embedding': encoder.encode_document(d['text']).tobytes(),
+                'metadata': d['metadata'],
+            }
+            for d in docs if d['text'].strip()
+        ]
+        if rows:
+            store.insert_all(rows)
+        return len(rows)
     except ImportError:
         pass
 

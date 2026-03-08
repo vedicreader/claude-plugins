@@ -59,26 +59,34 @@ Each signature is a dict:
 ## Indexing a Full Codebase
 
 ```python
+import json
 from pathlib import Path
 from codesigs import file_sigs
-from litesearch import SearchDB
+from litesearch import database
+from litesearch.utils import FastEncode
 
-db = SearchDB('.claude/code_index.db')
+db = database('.claude/code_index.db')
+store = db.get_store()
+encoder = FastEncode()
 
 for path in Path('src').rglob('*.py'):
     sigs = file_sigs(str(path))
-    docs = [{
-        'id': f'{path}::{s["name"]}',
-        'text': f'{s["signature"]}\n{s.get("docstring", "")}',
-        'file': str(path),
-        'name': s['name'],
-        'kind': s.get('kind', 'function'),
-    } for s in sigs]
-    if docs:
-        db.add_documents(docs)
+    rows = []
+    for s in sigs:
+        text = f'{s.get("signature", "")}\n{s.get("docstring", "")}'.strip()
+        if not text:
+            continue
+        rows.append({
+            'content': text,
+            'embedding': encoder.encode_document(text).tobytes(),
+            'metadata': json.dumps({'file': str(path), 'name': s.get('name', ''), 'kind': s.get('kind', 'function')}),
+        })
+    if rows:
+        store.insert_all(rows)
 
 # Now searchable
-results = db.search("email validation function")
+query = "email validation function"
+results = db.search(query, encoder.encode_query(query).tobytes(), limit=5)
 ```
 
 ## Getting Just Signatures for LLM Context

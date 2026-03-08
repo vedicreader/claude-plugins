@@ -49,6 +49,7 @@ Invoke with `/skill-name` in Claude Code:
 - `/safepyrun` — run Python code in a sandbox
 - `/litesearch` — semantic + keyword search over the codebase index
 - `/fasthtml` — build web UIs with FastHTML + HTMX
+- `/monsterui` — styled components for FastHTML (cards, forms, navbars, tables, DaisyUI)
 - `/lisette` — call LLMs via Lisette wrapper
 - `/nbdev` — notebook-driven development workflows
 - `/codesigs` — extract function/method signatures from source code
@@ -77,6 +78,7 @@ All packages are from AnswerDotAI / fastai ecosystem:
 | safepyrun | AnswerDotAI/safepyrun | Sandboxed Python execution |
 | litesearch | karthik777/litesearch | Hybrid FTS5 + vector code search |
 | fastHTML | answerdotai/fasthtml | Web framework (HTMX-native) |
+| MonsterUI | answerdotai/MonsterUI | Tailwind/FrankenUI components for FastHTML |
 | Lisette | answerdotai/Lisette | LLM wrapper (100+ providers) |
 | codesigs | answerdotai/codesigs | Code signature extraction |
 | nbdev | fastai/nbdev | Notebook-driven development |
