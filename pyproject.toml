@@ -1,0 +1,49 @@
+[project]
+name = "claude-plugins"
+version = "0.0.1"
+description = "One-command Claude Code dev environment setup with exhash, safecmd, safepyrun, litesearch, and more"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "vedicreader" }]
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+claude-plugins = "claude_plugins.setup_cmd:main"
+
+[project.optional-dependencies]
+dev = [
+    "python-fasthtml",
+    "litesearch",
+    "lisette",
+    "exhash",
+    "safecmd",
+    "safepyrun",
+    "codesigs",
+    "nbdev",
+    "jupyter",
+    "ipykernel",
+    "mcp>=1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["claude_plugins*"]
+
+[tool.setuptools.package-data]
+claude_plugins = [
+    "skills/**/*",
+    "config/**/*",
+    "hooks/**/*",
+]
+
+[tool.nbdev]
+lib_name = "claude_plugins"
+nbs_path = "nbs"
+doc_path = "docs"

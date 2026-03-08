@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "exhash": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "claude_plugins.mcp_exhash"]
+    },
+    "safecmd": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "claude_plugins.mcp_safecmd"]
+    },
+    "safepyrun": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "claude_plugins.mcp_safepyrun"]
+    }
+  }
+}

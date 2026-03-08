@@ -1,0 +1,27 @@
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "action": {
+        "type": "command",
+        "command": "uv run python -m claude_plugins.hooks.safecmd_hook"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Edit|Write",
+      "action": {
+        "type": "command",
+        "command": "uv run python -m claude_plugins.hooks.exhash_hook"
+      }
+    },
+    {
+      "event": "SessionStart",
+      "action": {
+        "type": "command",
+        "command": "uv run python -m claude_plugins.hooks.index_hook"
+      }
+    }
+  ]
+}
